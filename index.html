@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>PDF Cihuy</title>
+<title>PDF Cihuy — Fixed Resize</title>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
 <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
@@ -13,7 +13,7 @@
     --bg:#0b0d10; --panel:#0f1216; --muted:#9aa3b2; --accent:#6ee7b7; --danger:#ff6b6b; --primary-accent: #38bdf8;
     --card:#0e1114; --glass: rgba(255,255,255,0.02);
   }
-  html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial;color:#e6eff6;background:linear-gradient(180deg,#060708 0%, #091217 100%);}
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial;color:#e6eff6;background:linear-gradient(180deg,#060708 0%, #091217 100%);} 
   .app{display:grid;grid-template-columns:260px 1fr 320px;gap:14px;height:100vh;padding:14px;box-sizing:border-box}
   .panel{background:linear-gradient(180deg,var(--panel),#081017);border-radius:10px;padding:12px;box-shadow:0 6px 18px rgba(0,0,0,0.6);overflow:auto}
   h2{margin:0 0 8px 0;font-size:14px;color:var(--accent)}
@@ -62,20 +62,21 @@
   }
 
   /* --- Resizing & Overlay --- */
-  .overlay{position:absolute;touch-action:none;box-sizing:border-box;display:flex;align-items:center;justify-content:center;cursor:move}
+  .overlay{position:absolute;touch-action:none;box-sizing:border-box;display:flex;align-items:center;justify-content:center;cursor:move;z-index:2}
   .overlay.selected{outline:2px solid var(--primary-accent);}
-  .overlay > * { pointer-events: none; }
-  .resizer{width:10px; height:10px; background:white; border:2px solid var(--primary-accent); border-radius: 2px; position:absolute; display:none;}
+  /* Allow pointer events only on non-resizer children (so text/signature canvas won't intercept drags) */
+  .overlay > :not(.resizer) { pointer-events: none; }
+  .resizer{width:12px; height:12px; background:white; border:2px solid var(--primary-accent); border-radius: 3px; position:absolute; display:none; pointer-events:auto; touch-action:none; z-index:5}
   .overlay.selected .resizer { display:block; }
-  .resizer.br{bottom:-7px; right:-7px; cursor:nwse-resize;}
-  .resizer.bl{bottom:-7px; left:-7px; cursor:nesw-resize;}
-  .resizer.tr{top:-7px; right:-7px; cursor:nesw-resize;}
-  .resizer.tl{top:-7px; left:-7px; cursor:nwse-resize;}
+  .resizer.br{bottom:-8px; right:-8px; cursor:nwse-resize;}
+  .resizer.bl{bottom:-8px; left:-8px; cursor:nesw-resize;}
+  .resizer.tr{top:-8px; right:-8px; cursor:nesw-resize;}
+  .resizer.tl{top:-8px; left:-8px; cursor:nwse-resize;}
 
   /* right side editor */
   .prop-row{display:flex;gap:8px;align-items:center;margin-bottom:8px}
   input[type="color"]{padding:0;border:0;background:transparent;height:34px;width:44px}
-  .num-input {width: 80px; padding: 6px; border-radius: 6px; background: #071017; border: 1px solid rgba(255,255,255,0.04); color: var(--muted);}
+  .num-input {width: 80px; padding: 6px; border-radius: 6px; background: #071017; border: 1px solid rgba(255,255,255,0.04); color: var(--muted);} 
   footer{position:fixed;left:50%;transform:translateX(-50%);bottom:10px;background:rgba(0,0,0,0.3);padding:6px 12px;border-radius:12px;color:var(--muted);font-size:12px}
   
   #notificationModal {
@@ -131,14 +132,14 @@
 
   <div class="panel viewer">
     <div id="viewerHeader">
-        <h2 id="viewerTitle"></h2>
-        <div class="small" id="viewerSubtitle"></div>
+        <h2 id="viewerTitle">PDF Preview</h2>
+        <div class="small" id="viewerSubtitle">Upload a PDF or drag it here to begin.</div>
     </div>
     <div id="dropZone">
         <img src="https://i.ibb.co/MxvPXGTN/cihuy.jpg" alt="Drag and drop illustration">
         <p>DRAG PDF KESINI</p>
     </div>
-    <div id="pdfArea" class="pdf-canvas-wrap" style="margin-top:10px; display: none;">
+    <div id="pdfArea" class="pdf-canvas-wrap" style="margin-top:10px; display: none; position:relative;">
       <canvas id="pdfCanvas" class="pdf-canvas"></canvas>
     </div>
     <div id="combineArea" class="pdf-canvas-wrap" style="margin-top:10px; display:none; background:white; position:relative;">
@@ -189,11 +190,8 @@
 
 <script>
 /* -----------------------------
-  PDF Editor - Final Fix
-  - Drag and Drop PDF upload is functional.
-  - Resizing handles fully functional for all items.
-  - "Apply Changes" works reliably with notifications.
-  - Persistent sizing for combined items.
+  PDF Editor - Resize Drag Fix
+  - Main fix: ensure resizer handles receive pointer events (CSS + small z-index/touch fixes)
 --------------------------------*/
 const pdfjsLib = window['pdfjs-dist/build/pdf'] || window.pdfjsLib;
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
@@ -266,21 +264,27 @@ async function renderPage(pageNum){
 function getActiveArea(){ return isCombineMode ? combineArea : pdfArea; }
 function getActiveOverlays(){ return isCombineMode ? combineOverlays : overlays; }
 function recreateOverlaysForPage(pageNum){
-  Array.from(pdfArea.querySelectorAll('.overlay')).forEach(n=>n.remove());
-  overlays.filter(o=>o.page===pageNum).forEach(createOverlayElement);
+  // remove overlays for the current active area and re-create
+  Array.from(getActiveArea().querySelectorAll('.overlay')).forEach(n=>n.remove());
+  getActiveOverlays().filter(o=>o.page===pageNum || isCombineMode).forEach(createOverlayElement);
 }
 function createOverlayElement(o){
   const el = document.createElement('div');
   el.className = 'overlay'; el.dataset.id = o.id;
-  if(o.type==='signature'){ el.appendChild(document.createElement('canvas')); }
+  // ensure overlay won't accidentally eat pointer events on content
+  el.style.zIndex = 2;
+  if(o.type==='signature'){ const c = document.createElement('canvas'); el.appendChild(c); }
   else if(o.type==='combined'){ const img = document.createElement('img'); img.src = o.data; img.style.width='100%'; img.style.height='100%'; el.appendChild(img); }
   else { const t = document.createElement('div'); t.textContent = o.text || o.data; el.appendChild(t); }
   
   setOverlayStyles(el, o);
   
+  // attach pointer handlers
   el.addEventListener('pointerdown', e => initMove(e, o, el));
   ['tl','tr','bl','br'].forEach(h=> {
     const handle = document.createElement('div'); handle.className=`resizer ${h}`;
+    // ensure handle is focusable for touch/pointer events
+    handle.setAttribute('role','button'); handle.tabIndex = 0;
     handle.addEventListener('pointerdown', e => initResize(e, o, el, h));
     el.appendChild(handle);
   });
@@ -296,29 +300,34 @@ function setOverlayStyles(el, o){
     if(txtDiv) { Object.assign(txtDiv.style, { font:`${o.size}px Arial`, color: o.color, display:'flex', alignItems:'center', justifyContent:'center', width:'100%', height:'100%', whiteSpace:'nowrap' }); }
   } else if (o.type === 'signature') {
       const canvas = el.querySelector('canvas');
-      if (canvas) { canvas.width = o.width; canvas.height = o.height; drawSignatureOnCanvas(canvas, o.pathData, {color: o.color}); }
+      if (canvas) { canvas.width = Math.max(1, Math.round(o.width)); canvas.height = Math.max(1, Math.round(o.height)); drawSignatureOnCanvas(canvas, o.pathData, {color: o.color}); }
   }
 }
 function initMove(e, overlay, element) {
+  // if starting on a resizer, ignore move
   if (e.target.classList.contains('resizer')) return;
   e.stopPropagation(); selectOverlay(overlay.id);
   const startX = e.clientX, startY = e.clientY, startL = overlay.left, startT = overlay.top;
-  function doMove(e) { overlay.left = startL + e.clientX - startX; overlay.top = startT + e.clientY - startY; element.style.left = overlay.left + 'px'; element.style.top = overlay.top + 'px'; }
-  function stopMove() { window.removeEventListener('pointermove', doMove); window.removeEventListener('pointerup', stopMove); }
+  // capture pointer for smoother dragging
+  try{ e.target.setPointerCapture && e.target.setPointerCapture(e.pointerId); }catch(err){}
+  function doMove(ev) { overlay.left = startL + ev.clientX - startX; overlay.top = startT + ev.clientY - startY; element.style.left = overlay.left + 'px'; element.style.top = overlay.top + 'px'; }
+  function stopMove(ev) { try{ e.target.releasePointerCapture && e.target.releasePointerCapture(e.pointerId);}catch(err){} window.removeEventListener('pointermove', doMove); window.removeEventListener('pointerup', stopMove); }
   window.addEventListener('pointermove', doMove); window.addEventListener('pointerup', stopMove);
 }
 function initResize(e, o, el, handle) {
   e.stopPropagation(); selectOverlay(o.id);
+  // capture pointer to ensure we receive pointerup
+  try{ e.target.setPointerCapture && e.target.setPointerCapture(e.pointerId); }catch(err){}
   const startX = e.clientX, startY = e.clientY, {left:sL, top:sT, width:sW, height:sH} = o;
-  function doResize(e) {
-    const dx = e.clientX - startX, dy = e.clientY - startY;
+  function doResize(ev) {
+    const dx = ev.clientX - startX, dy = ev.clientY - startY;
     if(handle.includes('r')) o.width = Math.max(20, sW + dx);
     if(handle.includes('l')) { o.width = Math.max(20, sW - dx); o.left = sL + dx; }
     if(handle.includes('b')) o.height = Math.max(20, sH + dy);
     if(handle.includes('t')) { o.height = Math.max(20, sH - dy); o.top = sT + dy; }
     setOverlayStyles(el, o);
   }
-  function stopResize() { window.removeEventListener('pointermove', doResize); window.removeEventListener('pointerup', stopResize); selectOverlay(o.id); }
+  function stopResize(ev) { try{ e.target.releasePointerCapture && e.target.releasePointerCapture(e.pointerId);}catch(err){} window.removeEventListener('pointermove', doResize); window.removeEventListener('pointerup', stopResize); selectOverlay(o.id); }
   window.addEventListener('pointermove', doResize); window.addEventListener('pointerup', stopResize);
 }
 
@@ -517,7 +526,7 @@ document.getElementById('cancelCombined').addEventListener('click', exitCombineM
 document.getElementById('saveCombined').addEventListener('click', saveCombinedItem);
 document.getElementById('deleteOverlay').addEventListener('click', ()=>{ if(!selectedOverlay) return; const a=getActiveOverlays(),i=a.findIndex(o=>o.id===selectedOverlay.id); if(i>=0)a.splice(i,1); const el=getActiveArea().querySelector(`[data-id="${selectedOverlay.id}"]`); if(el)el.remove(); selectedOverlay=null;selectOverlay(null); });
 document.getElementById('clearSignature').addEventListener('click', clearSignCanvas);
-loadSavedItems(); console.log('PDF Sign & Stamp Final Fix ready');
+loadSavedItems(); console.log('PDF Sign & Stamp — Resize drag fix ready');
 
 </script>
 </body>
